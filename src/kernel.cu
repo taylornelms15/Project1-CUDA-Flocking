@@ -272,6 +272,19 @@ __global__ void kernUpdatePos(int N, float dt, glm::vec3 *pos, glm::vec3 *vel) {
   pos[index] = thisPos;
 }
 
+#define TNELMS_ADDITIONS
+#ifndef TNELMS_ADDITIONS
+/**
+* Helper function to compute distance between two boids
+* Added as the first steps of "can I modify this program sensibly"
+*/
+__global__ void kernComputeDistance(const glm::vec3* pos1, const glm::vec3* pos2, glm::mediump_float* result){
+    return hypot((pos2->x - pos1->x), (pos2->y - pos1->y), (pos2->z - pos1->z));
+
+}//kernComputeDistance
+
+#endif
+
 // LOOK-2.1 Consider this method of computing a 1D index from a 3D grid index.
 // LOOK-2.3 Looking at this method, what would be the most memory efficient
 //          order for iterating over neighboring grid cells?
