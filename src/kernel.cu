@@ -383,11 +383,11 @@ __global__ void kernUpdateVelocityBruteForce(int N, glm::vec3 *pos,
     glm::vec3 velChange = computeVelocityChange(N, index, pos, vel1);
 
     // Clamp the speed
-    glm::vec3 newVel = (*vel1) + velChange;
+    glm::vec3 newVel = vel1[index] + velChange;
     clampSpeed(&newVel);
 
     // Record the new velocity into vel2. Question: why NOT vel1?
-    *vel2 = newVel;
+    vel2[index] = newVel;
 }
 
 /**
@@ -491,8 +491,21 @@ __global__ void kernUpdateVelNeighborSearchCoherent(
 * Step the entire N-body simulation by `dt` seconds.
 */
 void Boids::stepSimulationNaive(float dt) {
-  // TODO-1.2 - use the kernels you wrote to step the simulation forward in time.
-  // TODO-1.2 ping-pong the velocity buffers
+#define ACTUALLYRUNNING 0//whether we want to build the code written here at all
+#if ACTUALLYBUILDING
+
+    // TODO-1.2 - use the kernels you wrote to step the simulation forward in time.
+    int N = numObjects;
+    dim3 fullBlocksPerGrid((N + blockSize - 1) / blockSize);
+
+    kernUpdateVelocityBruteForce<<<fullBlocksPerGrid, blockSize>>>(N, dev_pos, dev_vel1, dev_vel2);
+    //cudaDeviceSyncronize();//unneccessary?
+    kernUpdatePos<<<fullBlocksPerGrid, blockSize>>>(N, dt, dev_pos, dev_vel2);
+    
+
+    // TODO-1.2 ping-pong the velocity buffers
+    cudaMemcpy(dev_vel1, dev_vel2, N * sizeof(glm::vec3), cudaMemcpyDeviceToDevice);
+#endif
 }
 
 void Boids::stepSimulationScatteredGrid(float dt) {
