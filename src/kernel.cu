@@ -218,11 +218,140 @@ void Boids::copyBoidsToVBO(float *vbodptr_positions, float *vbodptr_velocities) 
   cudaDeviceSynchronize();
 }
 
+/******************
+* math helpers    *
+******************/
+
+/**
+* Helper function to compute distance between two boids
+* Added as the first steps of "can I modify this program sensibly"
+*/
+__device__ double computeDistance(const glm::vec3* pos1, const glm::vec3* pos2){
+    return hypot((pos2->x - pos1->x), (pos2->y - pos1->y), (pos2->z - pos1->z));
+
+}//kernComputeDistance
+
+/**
+* Clamps the speed down to maxSpeed
+* Does so in-place (DOES modify data)
+*/
+__device__ void clampSpeed(glm::vec3* vel){
+    glm::vec3 zeroPoint = glm::vec3(0.0f, 0.0f, 0.0f);
+    double curSpeed = computeDistance(&zeroPoint, vel);
+    if (curSpeed > maxSpeed){
+        double scaleFactor = maxSpeed / curSpeed; 
+        *vel *= scaleFactor;
+    }//if
+
+}//clampSpeed
 
 /******************
 * stepSimulation *
 ******************/
 
+/**
+* Given a self-boid and another single boid, returns the velocity contribution of the pair for rule 2
+* Will call this method for multiple boids
+*/
+__device__ glm::vec3 computeRule2VelContributionSingle(const glm::vec3* myPos, const glm::vec3* theirPos,
+                                                       const glm::vec3* myVel, const glm::vec3* theirVel){
+    glm::vec3 distBetween = computeDistance(myPos, theirPos);
+    if (distBetween > rule2Distance){
+        return glm::vec3(0.0f, 0.0f, 0.0f);
+    }//if
+
+    glm::vec3 distVec = *myPos - *theirPos;
+    distVec *= rule2Scale;//can algorithmically improve by moving this out of the for loop
+
+    return distVec; 
+
+}//computeRule2VelContributionSingle
+
+/**
+* Given a self-boid and another single boid, returns the velocity contribution of the pair for rule 3
+* Will call this method for multiple boids
+*/
+__device__ glm::vec3 computeRule3VelContributionSingle(const glm::vec3* myPos, const glm::vec3* theirPos,
+                                                       const glm::vec3* myVel, const glm::vec3* theirVel){
+    glm::vec3 distBetween = computeDistance(myPos, theirPos);
+    if (distBetween > rule3Distance){
+        return glm::vec3(0.0f, 0.0f, 0.0f);
+    }//if
+
+    return *theirVel * rule3Scale;
+
+}//computeRule3VelContributionSingle
+
+/**
+* Calculates the velocity contribution from rule 1 for all boids
+*/
+__device__ glm::vec3 computeRule1VelContribution(int N, int iSelf, const glm::vec3* pos, const glm::vec3* vel){
+
+    glm::vec3 perceivedCenter = glm::vec3(0.0f, 0.0f, 0.0f);
+    int numNeighbors = 0;
+
+    glm::vec3 myPos = pos[iSelf];
+    //glm::vec3 myVel = vel[iSelf];
+
+    for (int i = 0; i < N; i++){
+        if (i == iSelf) continue;
+        if (computeDistance(&myPos, &pos[i]) < rule1Distance){
+            numNeighbors++;
+            perceivedCenter += pos[i];
+        }//if a neighbor
+
+    }//for each boid
+
+    if (numNeighbors < 1) return glm::vec3(0.0f, 0.0f, 0.0f);
+
+    perceivedCenter /= numNeighbors;
+
+    glm::vec3 resultVector = perceivedCenter - myPos;
+
+    resultVector *= rule1Scale;
+
+    return resultVector;
+
+}//computeRule1VelContribution
+
+/**
+* Calculates the velocity contribution from rule 2 for all boids
+*/
+__device__ glm::vec3 computeRule2VelContribution(int N, int iSelf, const glm::vec3* pos, const glm::vec3* vel){
+
+    glm::vec3 velChange = glm::vec3(0.0f, 0.0f, 0.0f);
+
+    glm::vec3 myPos = pos[iSelf];
+    glm::vec3 myVel = vel[iSelf];
+
+    for (int i = 0; i < N; i++){
+        if (i == iSelf) continue;
+        velChange += computeRule2VelContributionSingle(&myPos, &pos[i], &myVel, &vel[i]);
+    }//for each boid
+
+    return velChange;
+
+}//computeRule2VelContribution
+    
+/**
+* Calculates the velocity contribution from rule 3 for all boids
+*/
+__device__ glm::vec3 computeRule3VelContribution(int N, int iSelf, const glm::vec3* pos, const glm::vec3* vel){
+
+    glm::vec3 velChange = glm::vec3(0.0f, 0.0f, 0.0f);
+
+    glm::vec3 myPos = pos[iSelf];
+    glm::vec3 myVel = vel[iSelf];
+
+    for (int i = 0; i < N; i++){
+        if (i == iSelf) continue;
+        velChange += computeRule3VelContributionSingle(&myPos, &pos[i], &myVel, &vel[i]);
+    }//for each boid
+
+    return velChange;
+
+}//computeRule3VelContribution
+    
 /**
 * LOOK-1.2 You can use this as a helper for kernUpdateVelocityBruteForce.
 * __device__ code can be called from a __global__ context
@@ -230,21 +359,35 @@ void Boids::copyBoidsToVBO(float *vbodptr_positions, float *vbodptr_velocities) 
 * in the `pos` and `vel` arrays.
 */
 __device__ glm::vec3 computeVelocityChange(int N, int iSelf, const glm::vec3 *pos, const glm::vec3 *vel) {
-  // Rule 1: boids fly towards their local perceived center of mass, which excludes themselves
-  // Rule 2: boids try to stay a distance d away from each other
-  // Rule 3: boids try to match the speed of surrounding boids
-  return glm::vec3(0.0f, 0.0f, 0.0f);
-}
+    // Rule 1: boids fly towards their local perceived center of mass, which excludes themselves
+    glm::vec3 rule1VelChange = computeRule1VelContribution(N, iSelf, pos, vel);
+    // Rule 2: boids try to stay a distance d away from each other
+    glm::vec3 rule2VelChange = computeRule2VelContribution(N, iSelf, pos, vel);
+    // Rule 3: boids try to match the speed of surrounding boids
+    glm::vec3 rule3VelChange = computeRule3VelContribution(N, iSelf, pos, vel);
+
+    return rule1VelChange + rule2VelChange + rule3VelChange;
+
+}//computeVelocityChange
 
 /**
 * TODO-1.2 implement basic flocking
 * For each of the `N` bodies, update its position based on its current velocity.
 */
 __global__ void kernUpdateVelocityBruteForce(int N, glm::vec3 *pos,
-  glm::vec3 *vel1, glm::vec3 *vel2) {
-  // Compute a new velocity based on pos and vel1
-  // Clamp the speed
-  // Record the new velocity into vel2. Question: why NOT vel1?
+    glm::vec3 *vel1, glm::vec3 *vel2) {
+
+    int index = threadIdx.x + (blockIdx.x * blockDim.x);
+
+    // Compute a new velocity based on pos and vel1
+    glm::vec3 velChange = computeVelocityChange(N, index, pos, vel1);
+
+    // Clamp the speed
+    glm::vec3 newVel = (*vel1) + velChange;
+    clampSpeed(&newVel);
+
+    // Record the new velocity into vel2. Question: why NOT vel1?
+    *vel2 = newVel;
 }
 
 /**
@@ -272,18 +415,6 @@ __global__ void kernUpdatePos(int N, float dt, glm::vec3 *pos, glm::vec3 *vel) {
   pos[index] = thisPos;
 }
 
-#define TNELMS_ADDITIONS
-#ifndef TNELMS_ADDITIONS
-/**
-* Helper function to compute distance between two boids
-* Added as the first steps of "can I modify this program sensibly"
-*/
-__global__ void kernComputeDistance(const glm::vec3* pos1, const glm::vec3* pos2, glm::mediump_float* result){
-    return hypot((pos2->x - pos1->x), (pos2->y - pos1->y), (pos2->z - pos1->z));
-
-}//kernComputeDistance
-
-#endif
 
 // LOOK-2.1 Consider this method of computing a 1D index from a 3D grid index.
 // LOOK-2.3 Looking at this method, what would be the most memory efficient
