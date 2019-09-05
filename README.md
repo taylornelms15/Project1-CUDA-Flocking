@@ -9,3 +9,10 @@ Project 1 - Flocking**
 
 Include screenshots, analysis, etc. (Remember, this is public, so don't put
 anything here that you don't want to share with the world.)
+
+### Interesting Notes
+
+During the naive implementation, I changed my `distBetween` function, which computed the distance between two vectors, 
+between using the glm::distance function and a simple sqrt(xdiff * xdiff + ydiff * ydiff + zdiff * zdiff) function.
+Though I would have expected the glm::distance function to be highly optimized in some fashion,
+I saw framerate drop from around 10fps to around 2.5fps in the simulation window.

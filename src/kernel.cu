@@ -3,6 +3,8 @@
 #include <cuda.h>
 #include <cmath>
 #include <glm/glm.hpp>
+#include <device_launch_parameters.h>
+#include <device_functions.h>
 #include "utilityCore.hpp"
 #include "kernel.h"
 
@@ -210,8 +212,8 @@ __global__ void kernCopyVelocitiesToVBO(int N, glm::vec3 *vel, float *vbo, float
 void Boids::copyBoidsToVBO(float *vbodptr_positions, float *vbodptr_velocities) {
   dim3 fullBlocksPerGrid((numObjects + blockSize - 1) / blockSize);
 
-  kernCopyPositionsToVBO << <fullBlocksPerGrid, blockSize >> >(numObjects, dev_pos, vbodptr_positions, scene_scale);
-  kernCopyVelocitiesToVBO << <fullBlocksPerGrid, blockSize >> >(numObjects, dev_vel1, vbodptr_velocities, scene_scale);
+  kernCopyPositionsToVBO <<< fullBlocksPerGrid, blockSize >>>(numObjects, dev_pos, vbodptr_positions, scene_scale);
+  kernCopyVelocitiesToVBO <<< fullBlocksPerGrid, blockSize >>>(numObjects, dev_vel1, vbodptr_velocities, scene_scale);
 
   checkCUDAErrorWithLine("copyBoidsToVBO failed!");
 
@@ -226,8 +228,12 @@ void Boids::copyBoidsToVBO(float *vbodptr_positions, float *vbodptr_velocities) 
 * Helper function to compute distance between two boids
 * Added as the first steps of "can I modify this program sensibly"
 */
-__device__ double computeDistance(const glm::vec3* pos1, const glm::vec3* pos2){
-    return hypot((pos2->x - pos1->x), (pos2->y - pos1->y), (pos2->z - pos1->z));
+__device__ float computeDistance(const glm::vec3* pos1, const glm::vec3* pos2){
+	//double result = sqrt((pos2->x - pos1->x) * (pos2->x - pos1->x) 
+	//		+ (pos2->y - pos1->y) * (pos2->y - pos1->y)
+	//		+ (pos2->z - pos1->z) * (pos2->z - pos1->z));
+	double result = glm::distance(*pos1, *pos2);
+	return result;
 
 }//kernComputeDistance
 
@@ -255,13 +261,12 @@ __device__ void clampSpeed(glm::vec3* vel){
 */
 __device__ glm::vec3 computeRule2VelContributionSingle(const glm::vec3* myPos, const glm::vec3* theirPos,
                                                        const glm::vec3* myVel, const glm::vec3* theirVel){
-    glm::vec3 distBetween = computeDistance(myPos, theirPos);
+    float distBetween = computeDistance(myPos, theirPos);
     if (distBetween > rule2Distance){
         return glm::vec3(0.0f, 0.0f, 0.0f);
     }//if
 
     glm::vec3 distVec = *myPos - *theirPos;
-    distVec *= rule2Scale;//can algorithmically improve by moving this out of the for loop
 
     return distVec; 
 
@@ -273,12 +278,12 @@ __device__ glm::vec3 computeRule2VelContributionSingle(const glm::vec3* myPos, c
 */
 __device__ glm::vec3 computeRule3VelContributionSingle(const glm::vec3* myPos, const glm::vec3* theirPos,
                                                        const glm::vec3* myVel, const glm::vec3* theirVel){
-    glm::vec3 distBetween = computeDistance(myPos, theirPos);
+    float distBetween = computeDistance(myPos, theirPos);
     if (distBetween > rule3Distance){
         return glm::vec3(0.0f, 0.0f, 0.0f);
     }//if
 
-    return *theirVel * rule3Scale;
+	return *theirVel;
 
 }//computeRule3VelContributionSingle
 
@@ -329,7 +334,7 @@ __device__ glm::vec3 computeRule2VelContribution(int N, int iSelf, const glm::ve
         velChange += computeRule2VelContributionSingle(&myPos, &pos[i], &myVel, &vel[i]);
     }//for each boid
 
-    return velChange;
+	return velChange * rule2Scale;
 
 }//computeRule2VelContribution
     
@@ -348,7 +353,7 @@ __device__ glm::vec3 computeRule3VelContribution(int N, int iSelf, const glm::ve
         velChange += computeRule3VelContributionSingle(&myPos, &pos[i], &myVel, &vel[i]);
     }//for each boid
 
-    return velChange;
+	return velChange * rule3Scale;
 
 }//computeRule3VelContribution
     
@@ -491,8 +496,7 @@ __global__ void kernUpdateVelNeighborSearchCoherent(
 * Step the entire N-body simulation by `dt` seconds.
 */
 void Boids::stepSimulationNaive(float dt) {
-#define ACTUALLYRUNNING 0//whether we want to build the code written here at all
-#if ACTUALLYBUILDING
+
 
     // TODO-1.2 - use the kernels you wrote to step the simulation forward in time.
     int N = numObjects;
@@ -505,7 +509,6 @@ void Boids::stepSimulationNaive(float dt) {
 
     // TODO-1.2 ping-pong the velocity buffers
     cudaMemcpy(dev_vel1, dev_vel2, N * sizeof(glm::vec3), cudaMemcpyDeviceToDevice);
-#endif
 }
 
 void Boids::stepSimulationScatteredGrid(float dt) {
