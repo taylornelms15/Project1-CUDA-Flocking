@@ -86,6 +86,8 @@ int *dev_particleGridIndices; // What grid cell is this particle in?
 int *dev_gridCellStartIndices; // What part of dev_particleArrayIndices belongs
 int *dev_gridCellEndIndices;   // to this cell?
 
+int numSteps = 0;
+
 // TODO-2.3 - consider what additional buffers you might need to reshuffle
 // the position and velocity data to be coherent within cells.
 
@@ -152,6 +154,13 @@ __host__ __device__ unsigned int hash(unsigned int a) {
   a = (a ^ 0xb55a4f09) ^ (a >> 16);
   return a;
 }
+
+bool testDevPosTransfer() {
+	glm::vec3 tempPos[100];
+	cudaMemcpy(tempPos, dev_pos, 100 * sizeof(glm::vec3), cudaMemcpyDeviceToHost);
+	checkCUDAErrorWithLine("\nDevPosTransfer did not work here!\n");
+	return true;
+}//testDevPosTransfer
 
 /**
 * LOOK-1.2 - this is a typical helper function for a CUDA kernel.
@@ -233,6 +242,8 @@ void Boids::initSimulation(int N) {
   cudaMalloc((void**)& dev_particleArrayIndices, N * sizeof(int));
   checkCUDAErrorWithLine("cudaMalloc dev_particleArrayIndices failed!");
 
+
+  testDevPosTransfer();
   cudaDeviceSynchronize();
 }
 
@@ -275,9 +286,9 @@ void Boids::copyBoidsToVBO(float *vbodptr_positions, float *vbodptr_velocities) 
   dim3 fullBlocksPerGrid((numObjects + blockSize - 1) / blockSize);
 
   kernCopyPositionsToVBO <<< fullBlocksPerGrid, blockSize >>>(numObjects, dev_pos, vbodptr_positions, scene_scale);
+  checkCUDAErrorWithLine("copyBoidsToVBO failed on Pos!");
   kernCopyVelocitiesToVBO <<< fullBlocksPerGrid, blockSize >>>(numObjects, dev_vel1, vbodptr_velocities, scene_scale);
-
-  checkCUDAErrorWithLine("copyBoidsToVBO failed!");
+  checkCUDAErrorWithLine("copyBoidsToVBO failed on Vel!");
 
   cudaDeviceSynchronize();
 }
@@ -423,9 +434,13 @@ __device__ glm::ivec2 findMyGridIndices(int cellNumber, int* gridIndices, int N)
 		}//else
 		else if (beginIndex != -1 && endIndex == -1 && i == N) {
 			endIndex = N;
-		}//else (last one to search)
+		}//I don't think it ever hits here?
 		i++;
 	}//while
+	if (beginIndex > endIndex) {
+		endIndex = N;//make sure we don't run off the end
+	}//if
+
 	return glm::ivec2(beginIndex, endIndex);
 
 }//findMyGridIndices
@@ -611,8 +626,6 @@ __global__ void kernComputeIndices(int N, int gridResolution,
 	//dev_particleArrayIndices
 	indices[index] = index;
 
-	//sort the arra by the grid
-
     // TODO-2.1
     // - Label each boid with the index of its grid cell.
     // - Set up a parallel array of integer indices as pointers to the actual
@@ -630,9 +643,12 @@ void Boids::sortGridIndices(int N) {
 	thrust::device_ptr<int> dev_thrust_particleArrayIndices(dev_particleArrayIndices);
 	thrust::device_ptr<int> dev_thrust_particleGridIndices(dev_particleGridIndices);
 
+	numSteps++;
+	printf("On sort #%d\n", numSteps);
+
 #if DEBUGOUT
-	cudaMemcpy(debugGridIndices, dev_tempParticleGrid, N * sizeof(int), cudaMemcpyDeviceToHost);
-	cudaMemcpy(debugArrayIndices, dev_tempParticleArray, N * sizeof(int), cudaMemcpyDeviceToHost);
+	cudaMemcpy(debugGridIndices, dev_particleGridIndices, N * sizeof(int), cudaMemcpyDeviceToHost);
+	cudaMemcpy(debugArrayIndices, dev_particleArrayIndices, N * sizeof(int), cudaMemcpyDeviceToHost);
 #endif
 
 	thrust::sort_by_key(dev_thrust_particleGridIndices, dev_thrust_particleGridIndices + N, dev_thrust_particleArrayIndices);
@@ -793,71 +809,38 @@ void Boids::stepSimulationNaive(float dt) {
 }
 
 void Boids::stepSimulationScatteredGrid(float dt) {
-  // TODO-2.1
-  // Uniform Grid Neighbor search using Thrust sort.
-  // In Parallel:
-  // - label each particle with its array index as well as its grid index.
-  //   Use 2x width grids.
-  // - Unstable key sort using Thrust. A stable sort isn't necessary, but you
-  //   are welcome to do a performance comparison.
-  // - Naively unroll the loop for finding the start and end indices of each
-  //   cell's data pointers in the array of boid indices
-  // - Perform velocity updates using neighbor search
-  // - Update positions
-  // - Ping-pong buffers as needed
+
 	int N = numObjects;
 	dim3 fullBlocksPerGrid((N + blockSize - 1) / blockSize);
 	dim3 fullBlocksPerCellGrid((gridCellCount + blockSize - 1) / blockSize);
 
-#if DEBUGOUT
-	int* debugGridIndices = (int*) malloc(N * sizeof(int));
-	int* debugArrayIndices = (int*) malloc(N * sizeof(int));
-	int* debugGridStarts = (int*)malloc(gridCellCount * sizeof(int));
-	int* debugGridEnds = (int*)malloc(gridCellCount * sizeof(int));
-#endif
-
-	kernComputeIndices <<<fullBlocksPerGrid, blockSize >>> (N, gridSideCount/*garbage*/, gridMinimum,
+	kernComputeIndices << <fullBlocksPerGrid, blockSize >> > (N, gridSideCount/*garbage*/, gridMinimum,
 		gridInverseCellWidth, dev_pos, dev_particleArrayIndices, dev_particleGridIndices);
-	
+	checkCUDAErrorWithLine("Error on kernComputeIndices\n");
+
+	cudaDeviceSynchronize();
+	checkCUDAErrorWithLine("Error on sync after computing indices!");
+
 	sortGridIndices(N);
-#if DEBUGOUT
-	cudaMemcpy(debugGridIndices, dev_particleGridIndices, N * sizeof(int), cudaMemcpyDeviceToHost);
-	cudaMemcpy(debugArrayIndices, dev_particleArrayIndices, N * sizeof(int), cudaMemcpyDeviceToHost);
-#endif
-	//TODO: look into making this just a serial operation, rather than parallelizing it inefficiently
-	kernFindGridStartEnds <<<fullBlocksPerCellGrid, blockSize >>> 
+
+	//TODO: look into making this just a serial operation, rather than parallelizing it inefficiently?
+	kernFindGridStartEnds <<<fullBlocksPerCellGrid, blockSize >>>
 		(N, dev_particleGridIndices, dev_gridCellStartIndices, dev_gridCellEndIndices);
-#if DEBUGOUT
-	cudaMemcpy(debugGridStarts, dev_gridCellStartIndices, gridCellCount * sizeof(int), cudaMemcpyDeviceToHost);
-	cudaMemcpy(debugGridEnds, dev_gridCellEndIndices, gridCellCount * sizeof(int), cudaMemcpyDeviceToHost);
-#endif
-	
-	kernUpdateVelNeighborSearchScattered<<<fullBlocksPerGrid, blockSize>>>(N, dev_gridCellStartIndices, dev_gridCellEndIndices, 
+	checkCUDAErrorWithLine("Error on kernFindGridStartEnds\n");
+
+
+	kernUpdateVelNeighborSearchScattered << <fullBlocksPerGrid, blockSize >> > (N, dev_gridCellStartIndices, dev_gridCellEndIndices,
 		dev_particleArrayIndices, dev_pos, dev_vel1, dev_vel2);
+	checkCUDAErrorWithLine("Error on kernUpdateVelNeighborSearchScattered!\n");
+	cudaDeviceSynchronize();
+	checkCUDAErrorWithLine("Error on sync after updating vel's\n");
 
 	kernUpdatePos <<<fullBlocksPerGrid, blockSize >>> (N, dt, dev_pos, dev_vel2);
+	checkCUDAErrorWithLine("Error on kernUpdatePos!\n");
 
-	/*
-	glm::vec3 debugPos[5000];
-	glm::vec3 debugVel1[5000];
-	glm::vec3 debugVel2[5000];
-
-	cudaMemcpy(debugPos, dev_pos, N * sizeof(glm::vec3), cudaMemcpyDeviceToHost);
-	cudaMemcpy(debugVel1, dev_vel1, N * sizeof(glm::vec3), cudaMemcpyDeviceToHost);
-	cudaMemcpy(debugVel2, dev_vel2, N * sizeof(glm::vec3), cudaMemcpyDeviceToHost);
-
-	printf("==============ROUND================\n");
-	for (int i = 0; i < 100; i++) {
-		printf("\t%d:\tp:(%.2f,%.2f,%.2f)\tv1:(%.2f,%.2f,%.2f)\tv2:(%.2f,%.2f,%.2f)\n",
-			i, debugPos[i].x, debugPos[i].y, debugPos[i].z,
-			debugVel1[i].x, debugVel1[i].y, debugVel1[i].z,
-			debugVel2[i].x, debugVel2[i].y, debugVel2[i].z);
-	}//for
-	*/
-
-
-	// TODO-1.2 ping-pong the velocity buffers
 	cudaMemcpy(dev_vel1, dev_vel2, N * sizeof(glm::vec3), cudaMemcpyDeviceToDevice);
+	checkCUDAErrorWithLine("cudaMemCpy for ping-pong vel1 and vel2 failed!\n");
+	cudaDeviceSynchronize();
 }
 
 void Boids::stepSimulationCoherentGrid(float dt) {
