@@ -86,8 +86,6 @@ int *dev_particleGridIndices; // What grid cell is this particle in?
 int *dev_gridCellStartIndices; // What part of dev_particleArrayIndices belongs
 int *dev_gridCellEndIndices;   // to this cell?
 
-int numSteps = 0;
-
 // TODO-2.3 - consider what additional buffers you might need to reshuffle
 // the position and velocity data to be coherent within cells.
 
@@ -384,10 +382,10 @@ __device__ void getNeighboringCellIndexes(int gridIndex, int octant, int* result
 }//getNeighboringCellIndexes
 
 __device__ void getNeighboringCellIndexesTrio(glm::ivec3 gridCoords, int octant, int* results) {
-	results[0] = gridCoordsToGridIndex(gridCoords);//my index
-	//bool xtop = (octant & 0x01) > 0;
-	//bool ytop = (octant & 0x02) > 0;
-	//bool ztop = (octant & 0x04) > 0;
+	int myIndex = gridCoordsToGridIndex(gridCoords);
+	results[0] = myIndex;//check own cell for sure
+
+	//stand-in for booleans because I don't trust the conversions
 	uint8_t xtop = (uint8_t)(octant & 0x01);
 	uint8_t ytop = (uint8_t)(octant & 0x02);
 	uint8_t ztop = (uint8_t)(octant & 0x04);
@@ -417,7 +415,6 @@ __device__ void getNeighboringCellIndexesTrio(glm::ivec3 gridCoords, int octant,
 													ytop ? y + 1 : y - 1,
 													ztop ? z + 1 : z - 1));
 
-
 }//getNeighboringCellIndexesTrio
 
 __device__ glm::ivec2 findMyGridIndices(int cellNumber, int* gridIndices, int N){
@@ -439,6 +436,9 @@ __device__ glm::ivec2 findMyGridIndices(int cellNumber, int* gridIndices, int N)
 	}//while
 	if (beginIndex > endIndex) {
 		endIndex = N;//make sure we don't run off the end
+	}//if
+	if (beginIndex > endIndex) {
+		printf("How is %d still more than %d?\n", beginIndex, endIndex);
 	}//if
 
 	return glm::ivec2(beginIndex, endIndex);
@@ -626,10 +626,6 @@ __global__ void kernComputeIndices(int N, int gridResolution,
 	//dev_particleArrayIndices
 	indices[index] = index;
 
-    // TODO-2.1
-    // - Label each boid with the index of its grid cell.
-    // - Set up a parallel array of integer indices as pointers to the actual
-    //   boid data in pos and vel1/vel2
 }
 
 void Boids::sortGridIndices(int N) {
@@ -642,9 +638,6 @@ void Boids::sortGridIndices(int N) {
 	// needed for use with thrust
 	thrust::device_ptr<int> dev_thrust_particleArrayIndices(dev_particleArrayIndices);
 	thrust::device_ptr<int> dev_thrust_particleGridIndices(dev_particleGridIndices);
-
-	numSteps++;
-	printf("On sort #%d\n", numSteps);
 
 #if DEBUGOUT
 	cudaMemcpy(debugGridIndices, dev_particleGridIndices, N * sizeof(int), cudaMemcpyDeviceToHost);
@@ -683,15 +676,6 @@ __global__ void kernResetIntBuffer(int N, int *intBuffer, int value) {
   }
 }
 
-/* OLD HEADER
-__global__ void kernUpdateVelNeighborSearchScattered(
-  int N, int gridResolution, glm::vec3 gridMin,
-  float inverseCellWidth, float cellWidth,
-  int *gridCellStartIndices, int *gridCellEndIndices,
-  int *particleArrayIndices,
-  glm::vec3 *pos, glm::vec3 *vel1, glm::vec3 *vel2) {
-*/
-
 __global__ void kernUpdateVelNeighborSearchScattered(
   int N, int *gridCellStartIndices, int *gridCellEndIndices,
   int *particleArrayIndices,
@@ -721,11 +705,12 @@ __global__ void kernUpdateVelNeighborSearchScattered(
 	//for each cell that could be close to us
 	for (int i = 0; i < 8; i++) {
 		int neighborCellIndex = neighborGridIndices[i];
+		if (neighborCellIndex < 0) continue;//ignoring a weird fringe error!
 		int cellStart = gridCellStartIndices[neighborCellIndex];
 		int cellEnd = gridCellEndIndices[neighborCellIndex];
 		//for each boid in that cell
 		int j = cellStart;
-		while (j != -1 && j != cellEnd) {
+		while (j != -1 && j != cellEnd && j < N) {
 			int neighborBoidIndex = particleArrayIndices[j];
 			if (neighborBoidIndex != index) {
 				glm::vec3 theirPos = pos[neighborBoidIndex];
@@ -828,6 +813,8 @@ void Boids::stepSimulationScatteredGrid(float dt) {
 		(N, dev_particleGridIndices, dev_gridCellStartIndices, dev_gridCellEndIndices);
 	checkCUDAErrorWithLine("Error on kernFindGridStartEnds\n");
 
+	cudaDeviceSynchronize();
+	checkCUDAErrorWithLine("Error on sync after updating gridstarts\n");
 
 	kernUpdateVelNeighborSearchScattered << <fullBlocksPerGrid, blockSize >> > (N, dev_gridCellStartIndices, dev_gridCellEndIndices,
 		dev_particleArrayIndices, dev_pos, dev_vel1, dev_vel2);
