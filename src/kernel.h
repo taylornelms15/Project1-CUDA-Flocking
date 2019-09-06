@@ -16,6 +16,8 @@ namespace Boids {
     void stepSimulationCoherentGrid(float dt);
     void copyBoidsToVBO(float *vbodptr_positions, float *vbodptr_velocities);
 
+	void sortGridIndices(int N);
+
     void endSimulation();
     void unitTest();
 }

@@ -8,6 +8,8 @@
 #include "utilityCore.hpp"
 #include "kernel.h"
 
+#define DEBUGOUT 1
+
 // LOOK-2.1 potentially useful for doing grid-based neighbor search
 #ifndef imax
 #define imax( a, b ) ( ((a) > (b)) ? (a) : (b) )
@@ -94,7 +96,49 @@ int gridCellCount;
 int gridSideCount;
 float gridCellWidth;
 float gridInverseCellWidth;
+
+__constant__ int dgridCellCount;
+__constant__ int dgridSideCount;
+__constant__ float dgridCellWidth;
+__constant__ float dgridInverseCellWidth;
+
 glm::vec3 gridMinimum;
+
+/********************************
+* Forward Function declarations
+*********************************/
+
+/**
+* Given a location in our world, gives us back which grid cell contains that point
+* Additionally, takes in an optional pointer to a spot into which to throw
+* the octant of our point within that grid cube
+* If passed NULL, the function will not determine the octant.
+*/
+__device__ int locToGridIndex(glm::vec3* pos, int* octant);
+
+/**
+* Converts a linear grid index to a trio of grid coordinates
+*/
+__device__ glm::vec3 gridIndexToGridCoords(int gridIndex);
+/**
+* Converts a trio of grid coordinates to a linear grid index
+*/
+__device__ int gridCoordsToGridIndex(glm::vec3 gridCoords);
+/**
+* These fill in an array `results` with the indexes of cells adjacent to the provided one
+* This list does include the provided cell as well
+* Notably, this requires the octant of the "center" as well
+* This NEEDS to be passed an int array with space for 8 result numbers
+*/
+__device__ void getNeighboringCellIndexes(int gridIndex, int octant, int* results);
+__device__ void getNeighboringCellIndexes(glm::vec3 gridCoords, int octant, int* results);
+
+/**
+* Function for finding the beginning/end of cellNumber in the sorted list gridIndices
+* Returns a 2d vector with the (indexBeginning, indexEnd) values (the latter exclusive), or (-1, -1) if not found
+* So, given a `cellNumber`, the array `gridIndices` contains that number from `indexBeginning` through `indexEnd -1`
+*/
+__device__ glm::ivec2 findMyGridIndices(int cellNumber, int* gridIndices, int N);
 
 /******************
 * initSimulation *
@@ -170,7 +214,26 @@ void Boids::initSimulation(int N) {
   gridMinimum.y -= halfGridWidth;
   gridMinimum.z -= halfGridWidth;
 
+  //Copy some of these grid constants to device memory, to abuse later
+  cudaMemcpyToSymbol(dgridCellCount, &gridCellCount, sizeof(int));
+  cudaMemcpyToSymbol(dgridSideCount, &gridSideCount, sizeof(int));
+  cudaMemcpyToSymbol(dgridCellWidth, &gridCellWidth, sizeof(float));
+  cudaMemcpyToSymbol(dgridInverseCellWidth, &gridInverseCellWidth, sizeof(float));
+
+  printf("halfSideCount %d, gridSideCount %d, gridCellCount %d, gridInverseCellWidth %0.1f, halfGridWidth %0.1f, gridmin (x, y, z) (%.1f, %.1f, %.1f)\n",
+	  halfSideCount, gridSideCount, gridCellCount, gridInverseCellWidth, halfGridWidth, gridMinimum.x, gridMinimum.y, gridMinimum.z);
+
   // TODO-2.1 TODO-2.3 - Allocate additional buffers here.
+
+  cudaMalloc((void**)& dev_gridCellStartIndices, gridCellCount * sizeof(int));
+  checkCUDAErrorWithLine("cudaMalloc dev_gridCellStartIndices failed!");
+  cudaMalloc((void**)& dev_gridCellEndIndices, gridCellCount * sizeof(int));
+  checkCUDAErrorWithLine("cudaMalloc dev_gridCellEndIndices failed!");
+  cudaMalloc((void**)& dev_particleGridIndices, N * sizeof(int));
+  checkCUDAErrorWithLine("cudaMalloc dev_particleGridIndices failed!");
+  cudaMalloc((void**)& dev_particleArrayIndices, N * sizeof(int));
+  checkCUDAErrorWithLine("cudaMalloc dev_particleArrayIndices failed!");
+
   cudaDeviceSynchronize();
 }
 
@@ -229,16 +292,17 @@ void Boids::copyBoidsToVBO(float *vbodptr_positions, float *vbodptr_velocities) 
 * Added as the first steps of "can I modify this program sensibly"
 */
 __device__ float computeDistance(const glm::vec3* pos1, const glm::vec3* pos2){
-	//double result = sqrt((pos2->x - pos1->x) * (pos2->x - pos1->x) 
-	//		+ (pos2->y - pos1->y) * (pos2->y - pos1->y)
-	//		+ (pos2->z - pos1->z) * (pos2->z - pos1->z));
-	double result = glm::distance(*pos1, *pos2);
+	double result = sqrt((pos2->x - pos1->x) * (pos2->x - pos1->x) 
+			+ (pos2->y - pos1->y) * (pos2->y - pos1->y)
+			+ (pos2->z - pos1->z) * (pos2->z - pos1->z));
+	//double result = glm::distance(*pos1, *pos2);
 	return result;
 
 }//kernComputeDistance
 
 /**
 * Clamps the speed down to maxSpeed
+*
 * Does so in-place (DOES modify data)
 */
 __device__ void clampSpeed(glm::vec3* vel){
@@ -250,6 +314,112 @@ __device__ void clampSpeed(glm::vec3* vel){
     }//if
 
 }//clampSpeed
+
+/********************
+* grid math helpers *
+*********************/
+
+__device__ int locToGridIndex(glm::vec3* pos, int* octant) {
+	//positions range between -scene_scale and scene_scale
+	float xGridPos = pos->x * dgridInverseCellWidth;//range between, for our example, -10 and 10
+	float yGridPos = pos->y * dgridInverseCellWidth;
+	float zGridPos = pos->z * dgridInverseCellWidth;
+
+	glm::vec3 gridTrio = glm::vec3((int)(glm::floor(xGridPos)), (int)(glm::floor(yGridPos)), (int)(glm::floor(zGridPos)));
+	int retval = gridCoordsToGridIndex(gridTrio);
+
+	if (octant != NULL) {
+		uint8_t topx = (((int)xGridPos) == ((int)(xGridPos - 0.5)));
+		uint8_t topy = (((int)yGridPos) == ((int)(yGridPos - 0.5)));
+		uint8_t topz = (((int)zGridPos) == ((int)(zGridPos - 0.5)));
+
+		*octant = (int)(topz << 2 | topy < 1 | topx);
+	}//if
+	return retval;
+}//locToGridIndex
+
+__device__ glm::vec3 gridIndexToGridCoords(int gridIndex) {
+	int coordz = gridIndex / (dgridSideCount * dgridSideCount);
+	int coordy = (gridIndex / dgridSideCount) % dgridSideCount;
+	int coordx = gridIndex % dgridSideCount;
+
+	glm::vec3 retval = glm::vec3(coordx, coordy, coordz);
+	retval += (dgridSideCount / 2);
+
+	return retval;
+
+}//gridIndexToGridCoords
+
+// LOOK-2.1 Consider this method of computing a 1D index from a 3D grid index.
+// LOOK-2.3 Looking at this method, what would be the most memory efficient
+//          order for iterating over neighboring grid cells?
+//          for(x)
+//            for(y)
+//             for(z)? Or some other order?
+__device__ int gridCoordsToGridIndex(glm::vec3 gridCoords) {
+	int halfSideCount = dgridSideCount / 2;
+	int coordx = gridCoords.x + halfSideCount;
+	int coordy = gridCoords.y + halfSideCount;
+	int coordz = gridCoords.z + halfSideCount;
+	return coordx + (coordy * dgridSideCount) + (coordz * dgridSideCount * dgridSideCount);
+}//gridCoordsToGridIndex
+
+__device__ void getNeighboringCellIndexes(int gridIndex, int octant, int* results) {
+	glm::vec3 gridCoord = gridIndexToGridCoords(gridIndex);
+	getNeighboringCellIndexes(gridCoord, octant, results);
+}//getNeighboringCellIndexes
+
+__device__ void getNeighboringCellIndexes(glm::vec3 gridCoords, int octant, int* results) {
+	results[0] = gridCoordsToGridIndex(gridCoords);//my index
+	bool xtop = (octant & 0x01);
+	bool ytop = (octant & 0x02) >> 1;
+	bool ztop = (octant & 0x04) >> 2;
+
+	results[1]    = gridCoordsToGridIndex(glm::vec3(xtop ? gridCoords.x + 1 : gridCoords.x - 1, 
+													gridCoords.y, 
+													gridCoords.z));
+	results[2]    = gridCoordsToGridIndex(glm::vec3(gridCoords.x,
+													ytop ? gridCoords.y + 1 : gridCoords.y - 1,
+													gridCoords.z));
+	results[3]    = gridCoordsToGridIndex(glm::vec3(gridCoords.x,
+													gridCoords.y,
+													ztop ? gridCoords.z + 1 : gridCoords.z - 1));
+	results[4]    = gridCoordsToGridIndex(glm::vec3(xtop ? gridCoords.x + 1 : gridCoords.x - 1,
+													ytop ? gridCoords.y + 1 : gridCoords.y - 1,
+													gridCoords.z));
+	results[5]    = gridCoordsToGridIndex(glm::vec3(xtop ? gridCoords.x + 1 : gridCoords.x - 1,
+													gridCoords.y,
+													ztop ? gridCoords.z + 1 : gridCoords.z - 1));
+	results[6]    = gridCoordsToGridIndex(glm::vec3(gridCoords.x,
+													ytop ? gridCoords.y + 1 : gridCoords.y - 1,
+													ztop ? gridCoords.z + 1 : gridCoords.z - 1));
+	results[7]    = gridCoordsToGridIndex(glm::vec3(xtop ? gridCoords.x + 1 : gridCoords.x - 1,
+													ytop ? gridCoords.y + 1 : gridCoords.y - 1,
+													ztop ? gridCoords.z + 1 : gridCoords.z - 1));
+
+
+}//getNeighboringCellIndexes
+
+__device__ glm::ivec2 findMyGridIndices(int cellNumber, int* gridIndices, int N){
+	int i = 0;
+	int beginIndex	= -1;
+	int endIndex	= -1;
+	while (i < N) {
+		if (beginIndex == -1 && gridIndices[i] == cellNumber) {
+			beginIndex = i;
+		}//if
+		else if (beginIndex != -1 && endIndex == -1 && gridIndices[i] != cellNumber) {
+			endIndex = i;
+			break;//for what good it does us, efficiency-wise, to break the loop early in the land of warps
+		}//else
+		else if (beginIndex != -1 && endIndex == -1 && i == N - 1) {
+			endIndex = N;
+		}//else (last one to search)
+		i++;
+	}//while
+	return glm::ivec2(beginIndex, endIndex);
+
+}//findMyGridIndices
 
 /******************
 * stepSimulation *
@@ -310,9 +480,7 @@ __device__ glm::vec3 computeRule1VelContribution(int N, int iSelf, const glm::ve
     if (numNeighbors < 1) return glm::vec3(0.0f, 0.0f, 0.0f);
 
     perceivedCenter /= numNeighbors;
-
     glm::vec3 resultVector = perceivedCenter - myPos;
-
     resultVector *= rule1Scale;
 
     return resultVector;
@@ -420,25 +588,56 @@ __global__ void kernUpdatePos(int N, float dt, glm::vec3 *pos, glm::vec3 *vel) {
   pos[index] = thisPos;
 }
 
-
-// LOOK-2.1 Consider this method of computing a 1D index from a 3D grid index.
-// LOOK-2.3 Looking at this method, what would be the most memory efficient
-//          order for iterating over neighboring grid cells?
-//          for(x)
-//            for(y)
-//             for(z)? Or some other order?
-__device__ int gridIndex3Dto1D(int x, int y, int z, int gridResolution) {
-  return x + y * gridResolution + z * gridResolution * gridResolution;
-}
-
 __global__ void kernComputeIndices(int N, int gridResolution,
   glm::vec3 gridMin, float inverseCellWidth,
   glm::vec3 *pos, int *indices, int *gridIndices) {
+
+	int index = threadIdx.x + (blockIdx.x * blockDim.x);
+	if (index >= N) {
+		return;
+	}
+
+	//dev_particleGridIndices
+	gridIndices[index] = locToGridIndex(&pos[index], NULL);
+	//dev_particleArrayIndices
+	indices[index] = index;
+
+	//sort the arra by the grid
+
     // TODO-2.1
     // - Label each boid with the index of its grid cell.
     // - Set up a parallel array of integer indices as pointers to the actual
     //   boid data in pos and vel1/vel2
 }
+
+void Boids::sortGridIndices(int N) {
+
+	//thrust::device_ptr<int> dev_thrust_particleArrayIndices;
+	//thrust::device_ptr<int> dev_thrust_particleGridIndices;
+	dev_thrust_particleArrayIndices		= (thrust::device_ptr<int>)dev_particleArrayIndices;
+	dev_thrust_particleGridIndices		= (thrust::device_ptr<int>)dev_particleGridIndices;
+
+	thrust::sort_by_key(dev_thrust_particleGridIndices, dev_thrust_particleGridIndices + N, dev_thrust_particleArrayIndices);
+
+}//sortGridIndices
+
+/**
+* Fills in the dev_gridCellStartIndices and dev_gridCellEndIndices arrays
+* This is happening once for each cell, not once for each boid
+*/
+__global__ void kernFindGridStartEnds(int N, int* particleGridIndices, int* gridStarts, int* gridEnds) {
+	// TODO-2.1
+	// Identify the start point of each cell in the gridIndices array.
+	// This is basically a parallel unrolling of a loop that goes
+	// "this index doesn't match the one before it, must be a new cell!"
+	int index = (blockIdx.x * blockDim.x) + threadIdx.x;
+	if (index >= dgridCellCount) return;
+
+	glm::ivec2 startEnd = findMyGridIndices(index, particleGridIndices, N);
+	gridStarts[index] = startEnd.x;
+	gridEnds[index] = startEnd.y;
+
+}//kernFindGridStartEnds
 
 // LOOK-2.1 Consider how this could be useful for indicating that a cell
 //          does not enclose any boids
@@ -449,20 +648,69 @@ __global__ void kernResetIntBuffer(int N, int *intBuffer, int value) {
   }
 }
 
-__global__ void kernIdentifyCellStartEnd(int N, int *particleGridIndices,
-  int *gridCellStartIndices, int *gridCellEndIndices) {
-  // TODO-2.1
-  // Identify the start point of each cell in the gridIndices array.
-  // This is basically a parallel unrolling of a loop that goes
-  // "this index doesn't match the one before it, must be a new cell!"
-}
-
+/* OLD HEADER
 __global__ void kernUpdateVelNeighborSearchScattered(
   int N, int gridResolution, glm::vec3 gridMin,
   float inverseCellWidth, float cellWidth,
   int *gridCellStartIndices, int *gridCellEndIndices,
   int *particleArrayIndices,
   glm::vec3 *pos, glm::vec3 *vel1, glm::vec3 *vel2) {
+*/
+
+__global__ void kernUpdateVelNeighborSearchScattered(
+  int N, int *gridCellStartIndices, int *gridCellEndIndices,
+  int *particleArrayIndices,
+  glm::vec3 *pos, glm::vec3 *vel1, glm::vec3 *vel2) {
+	int index = threadIdx.x + (blockIdx.x * blockDim.x);
+	if (index >= N) {
+		return;
+	}//if
+
+	//find our grid cell and octant
+	glm::vec3 myPos = pos[index];
+	glm::vec3 myVel = vel1[index];
+	int octant = -1;//will get overwritten
+	int myGridIndex = locToGridIndex(&myPos, &octant);
+	
+	//get the grid indices for our neighbors
+	int neighborGridIndices[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
+	getNeighboringCellIndexes(myGridIndex, octant, neighborGridIndices);
+	
+	//Accumulators for velocity contributions
+	glm::vec3 rule1VelChange = glm::vec3(0.0f, 0.0f, 0.0f);
+	glm::vec3 rule2VelChange = glm::vec3(0.0f, 0.0f, 0.0f);
+	glm::vec3 rule3VelChange = glm::vec3(0.0f, 0.0f, 0.0f);
+	glm::vec3 rule1Center	 = glm::vec3(0.0f, 0.0f, 0.0f);
+	int rule1NumNeighbors	 = 0;
+
+	//for each cell that could be close to us
+	for (int i = 0; i < 8; i++) {
+		int neighborCellIndex = neighborGridIndices[i];
+		//for each boid in that cell
+		int j = gridCellStartIndices[neighborCellIndex];
+		while (j != -1 && j != gridCellEndIndices[neighborCellIndex]) {
+			int neighborBoidIndex = particleArrayIndices[j];
+			if (neighborBoidIndex == index) continue;//skip ourselves
+			//do the contribution math
+			rule2VelChange += computeRule2VelContributionSingle(&myPos, &pos[neighborBoidIndex], 
+																&myVel, &vel1[neighborBoidIndex]);
+			rule3VelChange += computeRule3VelContributionSingle(&myPos, &pos[neighborBoidIndex],
+																&myVel, &vel1[neighborBoidIndex]);
+
+			//increment j, to find other boids in that cell
+			j++;
+		}//while
+	}//for
+
+
+	//scale the velocity contributions
+	rule1VelChange *= rule1Scale;
+	rule2VelChange *= rule2Scale;
+	rule3VelChange *= rule3Scale;
+	
+	
+
+
   // TODO-2.1 - Update a boid's velocity using the uniform grid to reduce
   // the number of boids that need to be checked.
   // - Identify the grid cell that this particle is in
@@ -503,10 +751,8 @@ void Boids::stepSimulationNaive(float dt) {
     dim3 fullBlocksPerGrid((N + blockSize - 1) / blockSize);
 
     kernUpdateVelocityBruteForce<<<fullBlocksPerGrid, blockSize>>>(N, dev_pos, dev_vel1, dev_vel2);
-    //cudaDeviceSyncronize();//unneccessary?
     kernUpdatePos<<<fullBlocksPerGrid, blockSize>>>(N, dt, dev_pos, dev_vel2);
     
-
     // TODO-1.2 ping-pong the velocity buffers
     cudaMemcpy(dev_vel1, dev_vel2, N * sizeof(glm::vec3), cudaMemcpyDeviceToDevice);
 }
@@ -524,6 +770,49 @@ void Boids::stepSimulationScatteredGrid(float dt) {
   // - Perform velocity updates using neighbor search
   // - Update positions
   // - Ping-pong buffers as needed
+	int N = numObjects;
+	dim3 fullBlocksPerGrid((N + blockSize - 1) / blockSize);
+	dim3 fullBlocksPerCellGrid((gridCellCount + blockSize - 1) / blockSize);
+
+#if DEBUGOUT
+	int* debugGridIndices = (int*) malloc(N * sizeof(int));
+	int* debugArrayIndices = (int*) malloc(N * sizeof(int));
+	int* debugGridStarts = (int*)malloc(gridCellCount * sizeof(int));
+	int* debugGridEnds = (int*)malloc(gridCellCount * sizeof(int));
+#endif
+
+	kernComputeIndices <<<fullBlocksPerGrid, blockSize >>> (N, gridSideCount/*garbage*/, gridMinimum,
+		gridInverseCellWidth, dev_pos, dev_particleArrayIndices, dev_particleGridIndices);
+#if DEBUGOUT
+	cudaMemcpy(debugGridIndices, dev_particleGridIndices, N * sizeof(int), cudaMemcpyDeviceToHost);
+	cudaMemcpy(debugArrayIndices, dev_particleArrayIndices, N * sizeof(int), cudaMemcpyDeviceToHost);
+#endif
+	sortGridIndices(N);
+#if DEBUGOUT
+	cudaMemcpy(debugGridIndices, dev_particleGridIndices, N * sizeof(int), cudaMemcpyDeviceToHost);
+	cudaMemcpy(debugArrayIndices, dev_particleArrayIndices, N * sizeof(int), cudaMemcpyDeviceToHost);
+#endif
+	//TODO: look into making this just a serial operation, rather than parallelizing it inefficiently
+	kernFindGridStartEnds <<<fullBlocksPerCellGrid, blockSize >>> 
+		(N, dev_particleGridIndices, dev_gridCellStartIndices, dev_gridCellEndIndices);
+#if DEBUGOUT
+	cudaMemcpy(debugGridStarts, dev_gridCellStartIndices, gridCellCount * sizeof(int), cudaMemcpyDeviceToHost);
+	cudaMemcpy(debugGridEnds, dev_gridCellEndIndices, gridCellCount * sizeof(int), cudaMemcpyDeviceToHost);
+#endif
+	//__global__ void kernUpdateVelNeighborSearchScattered(
+	//	int N, int gridResolution, glm::vec3 gridMin,
+	//	float inverseCellWidth, float cellWidth,
+	//	int* gridCellStartIndices, int* gridCellEndIndices,
+	//	int* particleArrayIndices,
+	//	glm::vec3 * pos, glm::vec3 * vel1, glm::vec3 * vel2);
+	
+	kernUpdateVelNeighborSearchScattered<<<fullBlocksPerGrid, blockSize>>>(N, dev_gridCellStartIndices, dev_gridCellEndIndices, 
+		dev_particleArrayIndices, dev_pos, dev_vel1, dev_vel2);
+	//kernUpdateVelocityBruteForce << <fullBlocksPerGrid, blockSize >> > (N, dev_pos, dev_vel1, dev_vel2);
+	kernUpdatePos << <fullBlocksPerGrid, blockSize >> > (N, dt, dev_pos, dev_vel2);
+
+	// TODO-1.2 ping-pong the velocity buffers
+	cudaMemcpy(dev_vel1, dev_vel2, N * sizeof(glm::vec3), cudaMemcpyDeviceToDevice);
 }
 
 void Boids::stepSimulationCoherentGrid(float dt) {
@@ -548,6 +837,11 @@ void Boids::endSimulation() {
   cudaFree(dev_vel1);
   cudaFree(dev_vel2);
   cudaFree(dev_pos);
+
+  cudaFree(dev_particleArrayIndices);
+  cudaFree(dev_particleGridIndices);
+  cudaFree(dev_gridCellStartIndices);
+  cudaFree(dev_gridCellEndIndices);
 
   // TODO-2.1 TODO-2.3 - Free any additional buffers here.
 }
