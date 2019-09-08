@@ -14,6 +14,15 @@
 #include "utilityCore.hpp"
 #include "glslUtility.hpp"
 #include "kernel.h"
+#include <vector>
+#include <chrono>
+#include <stdio.h>
+
+typedef struct timeRecord {
+	int frameNo;
+	double time;//milliseconds
+	long totalTime;//milliseconds
+} timeRecord;
 
 //====================================
 // GL Stuff
@@ -78,3 +87,6 @@ void runCUDA();
 bool init(int argc, char **argv);
 void initVAO();
 void initShaders(GLuint *program);
+
+void recordTime(std::chrono::steady_clock::time_point begin, std::chrono::steady_clock::time_point end);
+void writeTime(const char* fileName);

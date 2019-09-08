@@ -43,6 +43,15 @@ int main(int argc, char* argv[]) {
 std::string deviceName;
 GLFWwindow *window;
 
+//##############################
+// CUDA EVENTS FOR TIMING
+//##############################
+#define TIMEKEEPING_FRAMESIZE 300
+const char timingFileName[] = "../outputData/CoherentGrid_HighDensity_512.csv";
+std::chrono::steady_clock::time_point firstStart, start, stop;
+long numSteps = 0;
+std::vector<timeRecord> eventRecords = {};
+
 /**
 * Initialization of CUDA and GLFW.
 */
@@ -180,6 +189,7 @@ void initShaders(GLuint * program) {
     }
   }
 
+
   //====================================
   // Main loop
   //====================================
@@ -195,6 +205,13 @@ void initShaders(GLuint * program) {
     cudaGLMapBufferObject((void**)&dptrVertPositions, boidVBO_positions);
     cudaGLMapBufferObject((void**)&dptrVertVelocities, boidVBO_velocities);
 
+	if (numSteps == 0) {
+		firstStart = std::chrono::high_resolution_clock::now();
+	}
+	if (numSteps % TIMEKEEPING_FRAMESIZE == 0) {
+		start = std::chrono::high_resolution_clock::now();
+	}
+
     // execute the kernel
     #if UNIFORM_GRID && COHERENT_GRID
     Boids::stepSimulationCoherentGrid(DT);
@@ -204,9 +221,17 @@ void initShaders(GLuint * program) {
     Boids::stepSimulationNaive(DT);
     #endif
 
+	numSteps++;
+
     #if VISUALIZE
     Boids::copyBoidsToVBO(dptrVertPositions, dptrVertVelocities);
     #endif
+
+	if (numSteps % TIMEKEEPING_FRAMESIZE == 0) {
+		stop = std::chrono::high_resolution_clock::now();
+		recordTime(start, stop);
+	}//if
+
     // unmap buffer object
     cudaGLUnmapBufferObject(boidVBO_positions);
     cudaGLUnmapBufferObject(boidVBO_velocities);
@@ -256,6 +281,7 @@ void initShaders(GLuint * program) {
       glfwSwapBuffers(window);
       #endif
     }
+	writeTime(timingFileName);
     glfwDestroyWindow(window);
     glfwTerminate();
   }
@@ -311,3 +337,28 @@ void initShaders(GLuint * program) {
       glUniformMatrix4fv(location, 1, GL_FALSE, &projection[0][0]);
     }
   }
+
+  void recordTime(std::chrono::steady_clock::time_point begin, std::chrono::steady_clock::time_point end) {
+	  long long microseconds = std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count();
+	  long totalTime = std::chrono::duration_cast<std::chrono::milliseconds>(end - firstStart).count();
+	  double numMs = microseconds / 1000;
+
+	  eventRecords.push_back({ numSteps, numMs, totalTime });
+
+  }//recordTime
+
+  void writeTime(const char* fileName) {
+	  FILE* of = fopen(fileName, "w");
+
+	  for (auto& record : eventRecords) {
+		  double millisPerFrame = record.time / TIMEKEEPING_FRAMESIZE;
+		  millisPerFrame /= 1000.0;//seconds per frame
+		  double fps = 1.0 / millisPerFrame;
+		  double seconds = record.totalTime / 1000.0;
+		  fprintf(of, "%d,%0.3f,%f\n", record.frameNo, seconds, fps);
+	  }
+
+	  fclose(of);
+
+
+  }//writeTime
