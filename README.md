@@ -8,9 +8,16 @@ Project 1 - Flocking**
 ## Results
 ![](images/mLo_dMed_gMed.gif)
 *No Grid used for implementation*
+![](images/mMed_dMed_gMed.gif)
+*Uniform grid used within implementation*
+![](images/mHi_dMed_gMed.gif)
+*Coherent grid used within implementation*
 
 ## Analysis
 
+Unsurprisingly, the grid implementations ended up significantly more efficient than the naive implementation. For runs with 5000 boids, with a block size of 128, the FPS over a 45-ish-second run yielded the following results:
+
+![](images/All&#32;Grids,&#32;Medium&#32;Density,&#32;Block&#32;Size&#32;128.png)
 
 ### Interesting Notes
 
