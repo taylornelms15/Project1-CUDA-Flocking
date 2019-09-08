@@ -33,9 +33,31 @@ Another notable part here is that the framerate drops off over time for the unif
 
 ### Number of Boids
 
-Unsurprisingly, as the number of boids increase, the execution speed of the simulation decreases. Here are some comparisons for all the models, running with 2000 boids, 5000 boids, and 10000 boids:
+Unsurprisingly, as the number of boids increase, the execution speed of the simulation decreases. Here are some comparisons for all the models, running with `2000` boids, `5000` boids, and `10000` boids:
 
 ![](images/No&#32;Grid,&#32;All&#32;Densities,&#32;Block&#32;Size&#32;128.png) ![](images/Uniform&#32;Grid,&#32;All&#32;Densities,&#32;Block&#32;Size&#32;128.png) ![](images/Coherent&#32;Grid,&#32;All&#32;Densities,&#32;Block&#32;Size&#32;128.png)
+
+Unsurprisingly, the naive implementation shows a roughly linear relationship between simulation speed and the number of boids. The others have a more complex relationship, but the overall trend is clear, and they seem to do slightly better than linear with sample size.
+
+### Block Size
+
+The differences between block size were very interesting. I ran a series of simulations with block sizes of `32`, `128`, and `512`. Here are a couple of graphs comparing runs with various block sizes:
+
+![](images/No&#32;Grid,&#32;Medium&#32;Density,&#32;All&#32;Block&#32;Sizes.png)![](images/Coherent&#32;Grid,&#32;Medium&#32;Density,&#32;All&#32;Block&#32;Sizes.png)
+
+Notably, there is not that much difference in performance for the naive implementation based on block size. This makes some sense; so many of the operations are simple and easily parallelizable, it is hard to imagine that the various levels of scheduling or memory caching could make a significant performance difference.
+
+However, for the grid implementations, block sizes made huge differences in outcome. 
+
+The block size of 32 ran the worst. This makes some sense; there must be some amount of overhead in creating a block, and getting access to the relevant memory, and given the number of blocks that were spun up at various points in the simulation step, it makes sense that those penalties would add up.
+
+This would imply that a larger block size would improve performance; however, we see performance dip when we increase the block size from `128` to `512`. The best explanation I can think of is that a block needing to finish together before a new block can be put in its place would lead to situations where an entire block could be held up by a few rogure warps. In those cases, a whole section of processing power could be lost while the scheduler keeps a block running.
+
+### Bonus Graph
+
+Everyone needs a little graph gore in their life every now and then:
+
+![](images/All&#32;Test&#32;Runs.png)
 
 ### Miscellaneous Notes
 
