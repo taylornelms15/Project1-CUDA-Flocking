@@ -8,6 +8,10 @@ Project 1 - Flocking**
 ## Results
 ![](images/mLo_dMed_gMed.gif)
 *No Grid used for implementation*
+![](images/mMed_dMed_gMed.gif)
+*Uniform grid used within implementation*
+![](images/mHi_dMed_gMed.gif)
+*Coherent grid used within implementation*
 
 ## Analysis
 
