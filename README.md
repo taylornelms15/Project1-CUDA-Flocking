@@ -2,13 +2,15 @@
 Project 1 - Flocking**
 
 * Taylor Nelms
-  * (TODO) [LinkedIn](), [personal website](), [twitter](), etc.
-* Tested on: (TODO) Windows 22, i7-2222 @ 2.22GHz 22GB, GTX 222 222MB (Moore 2222 Lab)
+  * [LinkedIn](https://www.linkedin.com/in/taylor-k-7b2110191/), [twitter](https://twitter.com/nelms_taylor)
+* Tested on: Windows 10, Intel i3 Coffee Lake 4-core 3.6GHz processor, 16GB RAM, NVidia GeForce GTX1650 4GB
 
-### (TODO: Your README)
+## Results
+![](images/mLo_dMed_gMed.gif)
+*No Grid used for implementation*
 
-Include screenshots, analysis, etc. (Remember, this is public, so don't put
-anything here that you don't want to share with the world.)
+## Analysis
+
 
 ### Interesting Notes
 
@@ -19,4 +21,9 @@ I saw framerate drop from around 10fps to around 2.5fps in the simulation window
 
 #### NOTESPACE
 
-halfSideCount 11, gridSideCount 22, gridCellCount 10648, gridInverseCellWidth 0.1, halfGridWidth 110.0, gridmin (x, y, z) (-110.0, -110.0, -110.0)
+##### Testing IV's
+
+* Performance Mode (only switch for the mediums)
+* Particle Density (low, medium, high)
+* Grid Density (rule distances) (low, medium, high)
+* Framerate at beginning, and after some convergence
