@@ -17,7 +17,7 @@ Project 1 - Flocking**
 
 Unsurprisingly, the grid implementations ended up significantly more efficient than the naive implementation. For runs with 5000 boids, with a block size of 128, the FPS over a 45-ish-second run yielded the following results:
 
-![](images/"All Grids, Medium Density, Block Size 128.png")
+![](images/All-Grids,-Medium-Density,-Block-Size-128.png)
 
 ### Interesting Notes
 
