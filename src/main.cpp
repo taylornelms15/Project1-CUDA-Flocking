@@ -47,7 +47,7 @@ GLFWwindow *window;
 // CUDA EVENTS FOR TIMING
 //##############################
 #define TIMEKEEPING_FRAMESIZE 300
-const char timingFileName[] = "../outputData/CoherentGrid_HighDensity_512.csv";
+const char timingFileName[] = "../outputData/scratch.csv";
 std::chrono::steady_clock::time_point firstStart, start, stop;
 long numSteps = 0;
 std::vector<timeRecord> eventRecords = {};
