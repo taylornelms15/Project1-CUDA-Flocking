@@ -33,7 +33,9 @@ Another notable part here is that the framerate drops off over time for the unif
 
 ### Number of Boids
 
-Unsurprisingly, as the number of boids increase, the execution speed of the simulation decreases. Here are some results for
+Unsurprisingly, as the number of boids increase, the execution speed of the simulation decreases. Here are some comparisons for all the models, running with 2000 boids, 5000 boids, and 10000 boids:
+
+![](images/No&#32;Grid,&#32;All&#32;Densities,&#32;Block&#32;Size&#32;128.png) ![](images/Uniform&#32;Grid,&#32;All&#32;Densities,&#32;Block&#32;Size&#32;128.png) ![](images/Coherent&#32;Grid,&#32;All&#32;Densities,&#32;Block&#32;Size&#32;128.png)
 
 ### Miscellaneous Notes
 
