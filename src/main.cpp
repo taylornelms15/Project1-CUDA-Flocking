@@ -356,9 +356,7 @@ void initShaders(GLuint * program) {
 		  double fps = 1.0 / millisPerFrame;
 		  double seconds = record.totalTime / 1000.0;
 		  fprintf(of, "%d,%0.3f,%f\n", record.frameNo, seconds, fps);
-	  }
+	  }//for
 
 	  fclose(of);
-
-
   }//writeTime
