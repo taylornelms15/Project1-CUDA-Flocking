@@ -18,3 +18,8 @@ After collecting the data across a number of iterations, inside a `std::vector` 
 
           fclose(of);
       }//writeTime
+
+After this, I wrote the records into the csv. This involves rows being separated by newlines, and columns being separated by commas.
+
+For my particular code, the filenames were hard-coded filenames, like the following:
+    const char timingFileName[] = "../outputData/CoherentGrid_HighDensity_128.csv";
