@@ -3,7 +3,7 @@ GRAPHING WITH PYTHON
 
 ## Files
 
-The python script may be found (here)[outputData/csvReader.py]
+The python script may be found [here](outputData/csvReader.py).
 
 ## Recording the CSV file
 
