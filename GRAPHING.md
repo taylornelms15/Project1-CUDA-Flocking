@@ -25,6 +25,32 @@ After this, I wrote the records into the csv. This involves rows being separated
 
 For my particular code, the filenames were hard-coded filenames, like the following:
 
+```C++
     const char timingFileName[] = "../outputData/CoherentGrid_HighDensity_128.csv";
+```
 
-## Reading the CSV file
+## Using the Data
+
+### Invoking the Python script
+
+The script I wrote takes in at least two arguments; the first is the title for the graph (and, by extension, the name of the image to save), and all arguments after that are names of csv files, in the format recorded above.
+
+The main function is as follows:
+
+```Python
+
+    def main():
+        if len(sys.argv) < 3:
+            print("Please input a title and file names")
+            exit(0)
+
+        resultSets = []
+
+        for i, fileName in enumerate(sys.argv):
+            if i == 0 or i == 1:
+                continue
+            resultSets.append((fileName, readCSV(fileName)))
+
+        makeGraphs(resultSets, sys.argv[1])
+
+```

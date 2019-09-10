@@ -7,6 +7,12 @@ import csv
 
 
 def readCSV(filename):
+    """
+    takes in a filename
+    returns a numpy array, with the first row as the
+        timestamp in seconds, and the second row 
+        as the fps across the last time block
+    """
     results = []
     with open(filename) as csv_file:
         reader = csv.reader(csv_file, delimiter=',')
@@ -18,6 +24,9 @@ def readCSV(filename):
     return np.array(results).T
 
 def makeGraphs(resultSets, title):
+    """
+    Displays the resultant data sets, along with a given title
+    """
     fig, ax = plt.subplots(1)
     for filename, data in resultSets:
         ax.plot(data[0], data[1], label = cleanFileName(filename))
@@ -29,15 +38,14 @@ def makeGraphs(resultSets, title):
     fig.suptitle(title)
     fig.set_size_inches(10,6)
     
-    #plt.show()
+    #plt.show() #uncomment this to display the graph on your screen
     filePath = makeSavePath(title)
     plt.savefig(filePath)
 
-def makeGraph(array):
-    plt.plot(array[0], array[1])
-    plt.show()
-
 def cleanFileName(fileName):
+    """
+    Turns the filename into a string appropriate for labeling a data series
+    """
     regstr = "([A-Z][a-z]+)([A-Z][a-z]+)_([A-Z][a-z]+)([A-Z][a-z]+)_([0-9]+).csv"
     tokens = re.match(regstr, fileName).groups()
 
@@ -61,7 +69,6 @@ def main():
         if i == 0 or i == 1:
             continue
         resultSets.append((fileName, readCSV(fileName)))
-
     
     makeGraphs(resultSets, sys.argv[1])
 
