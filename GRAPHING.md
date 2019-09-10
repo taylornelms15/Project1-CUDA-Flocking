@@ -39,7 +39,7 @@ For my particular code, the filenames were hard-coded filenames, like the follow
 
 The script I wrote takes in at least two arguments; the first is the title for the graph (and, by extension, the name of the image to save), and all arguments after that are names of csv files, in the format recorded above.
 
-For example, a way to use this script would be to call `python csvReader.py "Coherent Grid, High Density, All Block Sizes" CoherentGrid_*.csv`
+For example, a way to use this script would be to call `python csvReader.py "Coherent Grid, High Density, All Block Sizes" CoherentGrid_HighDensity_*.csv`
 
 The main function is as follows:
 
