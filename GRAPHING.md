@@ -1,6 +1,10 @@
 GRAPHING WITH PYTHON
 ====================
 
+## Files
+
+The python script may be found (here)[outputData/csvReader.py]
+
 ## Recording the CSV file
 
 After collecting the data across a number of iterations, inside a `std::vector` of structs called `eventRecords`, I looped through each of them to extract the iteration number, the time between the two records, and the total simulation time up until that point:
@@ -54,3 +58,5 @@ The main function is as follows:
         makeGraphs(resultSets, sys.argv[1])
 
 ```
+
+It takes each CSV file, transforms it into a Numpy array, and binds that into a tuple along with the name of the file the data came from. For each of those sets
