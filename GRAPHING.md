@@ -3,7 +3,7 @@ GRAPHING WITH PYTHON
 
 ## Files
 
-The python script may be found [here](outputData/csvReader.py).
+The python script may be found [here](outputData/csvReader.py). The other relevant code is in the `main` file within `src`.
 
 ## Recording the CSV file
 
@@ -39,6 +39,8 @@ For my particular code, the filenames were hard-coded filenames, like the follow
 
 The script I wrote takes in at least two arguments; the first is the title for the graph (and, by extension, the name of the image to save), and all arguments after that are names of csv files, in the format recorded above.
 
+For example, a way to use this script would be to call `python csvReader.py "Coherent Grid, High Density, All Block Sizes" CoherentGrid_*.csv`
+
 The main function is as follows:
 
 ```Python
@@ -59,4 +61,6 @@ The main function is as follows:
 
 ```
 
-It takes each CSV file, transforms it into a Numpy array, and binds that into a tuple along with the name of the file the data came from. For each of those sets
+It takes each CSV file, transforms it into a Numpy array, and binds that into a tuple along with the name of the file the data came from. It then hands each of those sets off to a function that graphs them, and saves out the data (or, optionally, displays it onscreen).
+
+###
